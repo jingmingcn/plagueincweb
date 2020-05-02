@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      canvas {
+        margin: 0px;
+        border: 0px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas" width="800" height="600"></canvas>
+    <script type="text/javascript">
+      (function () {
+        var width =
+          window.innerWidth ||
+          document.documentElement.clientWidth ||
+          document.body.clientWidth;
+        var height =
+          window.innerHeight ||
+          document.documentElement.clientHeight ||
+          document.body.clientHeight;
+        var canvas = document.getElementById("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        var ctx = canvas.getContext("2d");
+        var isRun = true;
+        const HS_HEALTH = "health";
+        const HS_INFECTED = "infected";
+        const HS_DEAD = "dead";
+        const HS_IMMUNITY = "immunity";
+
+        var init_population = 100;
+        var fps = 60;
+        var radius = 4;
+
+        var walk_distance = 50;
+        var walk_period = 3000.0;
+        var infect_distance = 20;
+        var infect_rate = 0.1;
+        var infect_peroid = 10_000.0;
+        var infect_dead_rate = 0.001; // emulating parameter, not real dead rate
+
+        var isInsideCity = function (x, y) {
+          return (
+            x >= radius &&
+            x <= width - radius &&
+            y >= radius &&
+            y <= height - radius
+          );
+        };
+
+        var randomPosition = function () {
+          var x = radius + Math.random() * (width - 2 * radius);
+          var y = radius + Math.random() * (height - 2 * radius);
+          return { x: x, y: y };
+        };
+
+        var randomWalk = function (_x, _y) {
+          var x, y;
+          do {
+            x = _x + (Math.random() * 2 - 1) * walk_distance;
+            y = _y + (Math.random() * 2 - 1) * walk_distance;
+          } while (!isInsideCity(x, y));
+
+          return { x: x, y: y };
+        };
+
+        var persons = [];
+
+        // Initialize Persons
+        for (var i = 0; i < init_population; i++) {
+          var _position = randomPosition();
+          var position = randomWalk(_position.x, _position.y);
+          var cur_position = {
+            x: _position.x,
+            y: _position.y,
+          };
+          var person = {
+            position: position,
+            _position: _position,
+            cur_position: cur_position,
+            healthState: HS_HEALTH,
+            bubble_radius: radius,
+            lastWalkTime: Date.now() + Math.random() * walk_period,
+          };
+          persons.push(person);
+        }
+
+        // mouse down to drop the patient zero
+        canvas.addEventListener("mousedown", (e) => {
+          var rect = canvas.getBoundingClientRect();
+          var _position = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+          var position = randomWalk(_position.x, _position.y);
+          var cur_position = {
+            x: _position.x,
+            y: _position.y,
+          };
+
+          var person = {
+            position: position,
+            _position: _position,
+            cur_position: cur_position,
+            healthState: HS_INFECTED,
+            infected_time: Date.now(),
+            bubble_radius: radius,
+            last_bubble_time: Date.now(),
+            lastWalkTime: Date.now(),
+          };
+
+          persons.push(person);
+        });
+
+        var doLogic = function () {
+          var now = Date.now();
+
+          // Random Walk Logic
+          persons
+            .filter((v) => {
+              return v.healthState != HS_DEAD;
+            })
+            .forEach((v) => {
+              var rate = (now - v.lastWalkTime) / walk_period;
+
+              if (rate >= 1) {
+                v._position = {
+                  x: v.cur_position.x,
+                  y: v.cur_position.y,
+                };
+                v.position = randomWalk(v.cur_position.x, v.cur_position.y);
+                v.lastWalkTime = now;
+              } else {
+                v.cur_position.x =
+                  v._position.x + (v.position.x - v._position.x) * rate;
+                v.cur_position.y =
+                  v._position.y + (v.position.y - v._position.y) * rate;
+              }
+            });
+
+          // Random Infect Logic
+          persons
+            .filter((v) => {
+              return v.healthState == HS_INFECTED;
+            })
+            .forEach((v) => {
+              persons
+                .filter((p) => {
+                  return (
+                    Math.pow(v.cur_position.x - p.cur_position.x, 2) +
+                      Math.pow(v.cur_position.y - p.cur_position.y, 2) <=
+                      Math.pow(infect_distance, 2) && p.healthState == HS_HEALTH
+                  );
+                })
+                .forEach((p) => {
+                  if (Math.random() <= infect_rate) {
+                    p.healthState = HS_INFECTED;
+                    p.infected_time = now;
+                    p.last_bubble_time = now;
+                    p.bubble_radius = radius;
+                  }
+                });
+            });
+
+          // Random Dead or Immunity Logic
+          persons
+            .filter((v) => {
+              return (
+                v.healthState == HS_INFECTED &&
+                now - v.infected_time > infect_peroid
+              );
+            })
+            .forEach((v) => {
+              if (Math.random() <= infect_dead_rate) {
+                v.healthState = HS_DEAD;
+              } else {
+                v.healthState = HS_IMMUNITY;
+              }
+            });
+
+          // Bubble Animation Logic
+          persons
+            .filter((v) => {
+              return v.healthState == HS_INFECTED;
+            })
+            .forEach((v) => {
+              v.bubble_radius +=
+                ((now - v.last_bubble_time) / walk_period) *
+                3 *
+                (infect_distance - radius);
+              if (v.bubble_radius > infect_distance) {
+                v.bubble_radius = radius;
+              }
+              v.last_bubble_time = now;
+            });
+        };
+
+        var lastLoopTime = Date.now();
+        var lastFPSTime = Date.now();
+        var fps_ = 0;
+        var render = function () {
+          doLogic();
+          var now = Date.now();
+
+          var healthPersons = persons.filter((v) => {
+            return v.healthState == HS_HEALTH;
+          });
+
+          var infectedPersons = persons.filter((v) => {
+            return v.healthState == HS_INFECTED;
+          });
+
+          var immunityPersons = persons.filter((v) => {
+            return v.healthState == HS_IMMUNITY;
+          });
+
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+          ctx.fillStyle = "#82b74b";
+          healthPersons.forEach((v) => {
+            ctx.beginPath();
+            ctx.arc(
+              v.cur_position.x,
+              v.cur_position.y,
+              radius,
+              0,
+              2 * Math.PI,
+              false
+            );
+            ctx.fill();
+          });
+
+          ctx.fillStyle = "blue";
+          immunityPersons.forEach((v) => {
+            ctx.beginPath();
+            ctx.arc(
+              v.cur_position.x,
+              v.cur_position.y,
+              radius,
+              0,
+              2 * Math.PI,
+              false
+            );
+            ctx.fill();
+          });
+
+          ctx.fillStyle = "red";
+          infectedPersons.forEach((v) => {
+            ctx.beginPath();
+            ctx.arc(
+              v.cur_position.x,
+              v.cur_position.y,
+              radius,
+              0,
+              2 * Math.PI,
+              false
+            );
+            ctx.fill();
+          });
+
+          ctx.strokeStyle = "red";
+          infectedPersons.forEach((v) => {
+            ctx.beginPath();
+            ctx.arc(
+              v.cur_position.x,
+              v.cur_position.y,
+              v.bubble_radius,
+              0,
+              2 * Math.PI,
+              false
+            );
+            ctx.stroke();
+          });
+
+          var sleepTime = 1000 / fps - (now - lastLoopTime);
+          if (sleepTime < 0) sleepTime = 0;
+          lastLoopTime = Date.now();
+          //console.log("sleepTime:" + sleepTime);
+          setTimeout(render, sleepTime);
+
+          if (now - lastFPSTime >= 1000) {
+            //console.log("fps:" + fps_);
+            lastFPSTime = now;
+            fps_ = 0;
+          } else {
+            fps_++;
+          }
+        };
+
+        render();
+      })();
+    </script>
+  </body>
+</html>
